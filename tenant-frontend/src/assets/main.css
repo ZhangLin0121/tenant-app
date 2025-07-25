@@ -1,0 +1,6 @@
+/* 引入 Tailwind 基础样式 */
+@import 'tailwindcss/base';
+/* 引入 Tailwind 组件样式 */
+@import 'tailwindcss/components';
+/* 引入 Tailwind 工具样式 */
+@import 'tailwindcss/utilities';
