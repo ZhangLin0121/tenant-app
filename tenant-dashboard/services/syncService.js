@@ -1,24 +1,65 @@
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 const Tenant = require('../models/tenant.model');
 
 const fetchAllTenants = async (page) => {
+    // 等待 3 秒，确保所有登录后脚本（包括 cookie 设置）都已完成
     await new Promise(resolve => setTimeout(resolve, 3000));
-    return await page.evaluate(async () => {
-        const getCookie = (key) => { const cs = document.cookie.split('; '); for (const c of cs) { const [k, v] = c.split('='); if (k.trim() === key) return v; } return null; };
-        const amsToken = getCookie('_ams_token'); const commonToken = getCookie('_common_token');
-        if (!amsToken || !commonToken) { console.error('Cookie中缺少token'); return []; }
-        let currentPage = 1, hasMore = true, allRecords = [];
+
+    // page.evaluate 会在浏览器环境中执行传入的函数
+    const allTenants = await page.evaluate(async () => {
+        // 辅助函数：用于从 cookie 字符串中解析出特定 key 的值
+        const getCookie = (key) => {
+            const cookieStr = document.cookie;
+            const cookies = cookieStr.split('; ');
+            for (const cookie of cookies) {
+                const [cookieKey, cookieValue] = cookie.split('=');
+                if (cookieKey.trim() === key) {
+                    return cookieValue;
+                }
+            }
+            return null;
+        };
+
+        const amsToken = getCookie('_ams_token');
+        const commonToken = getCookie('_common_token');
+
+        if (!amsToken || !commonToken) {
+            console.error('在 document.cookie 中未能找到 _ams_token 或 _common_token！');
+            return [];
+        }
+
+        let currentPage = 1;
+        let hasMore = true;
+        const allRecords = [];
+
         const apiUrl = 'https://platform.inzhiyu.com/ams/api/contractEnterprise/guestsList';
         const payload = { pageSize: 50, guestsName: "", contractType: 3, contractId: 1489 };
-        while(hasMore) {
+
+        while (hasMore) {
             try {
-                const res = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json;charset=UTF-8', '_ams_token': amsToken, '_common_token': commonToken }, body: JSON.stringify({ ...payload, pageNumber: currentPage }) });
+                const res = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json;charset=UTF-8',
+                        '_ams_token': amsToken,
+                        '_common_token': commonToken
+                    },
+                    body: JSON.stringify({ ...payload, pageNumber: currentPage })
+                });
                 const data = await res.json();
-                if (res.ok && data.code === 1000 && data.data.records && data.data.records.length > 0) { allRecords.push(...data.data.records); currentPage++; } else { hasMore = false; }
-            } catch (err) { hasMore = false; }
+                if (res.ok && data.code === 1000 && data.data.records && data.data.records.length > 0) {
+                    allRecords.push(...data.data.records);
+                    currentPage++;
+                } else {
+                    hasMore = false;
+                }
+            } catch (err) {
+                hasMore = false;
+            }
         }
         return allRecords;
     });
+    return allTenants;
 };
 
 const syncTenantsToDB = async (tenants) => {
@@ -27,17 +68,34 @@ const syncTenantsToDB = async (tenants) => {
         return;
     }
     console.log(`准备将 ${tenants.length} 条数据同步到数据库...`);
+
     const bulkOps = tenants.map(tenant => {
         const houseName = tenant.houseName || '';
         const roomMatch = houseName.match(/-(\d+)$/);
         const roomNumberStr = roomMatch ? roomMatch[1] : '0';
         const floor = roomNumberStr.length > 3 ? parseInt(roomNumberStr.substring(0, 2), 10) : parseInt(roomNumberStr.substring(0, 1), 10);
-        const fullData = { ...tenant, _id: tenant.id, floor: floor, roomNumber: parseInt(roomNumberStr, 10), isMain: tenant.isMain === 1 };
-        return { updateOne: { filter: { _id: tenant.id }, update: { $set: fullData }, upsert: true } };
+
+        const fullData = {
+            ...tenant,
+            _id: tenant.id,
+            floor: floor,
+            roomNumber: parseInt(roomNumberStr, 10),
+            isMain: tenant.isMain === 1,
+        };
+
+        return {
+            updateOne: {
+                filter: { _id: tenant.id },
+                update: { $set: fullData },
+                upsert: true,
+            },
+        };
     });
+
     console.log('正在执行批量更新/插入操作...');
     await Tenant.bulkWrite(bulkOps);
     console.log('批量更新/插入操作完成。');
+
     const currentTenantIds = tenants.map(t => t.id);
     const deleteResult = await Tenant.deleteMany({ _id: { $nin: currentTenantIds } });
     if (deleteResult.deletedCount > 0) {
@@ -52,21 +110,27 @@ const runSync = async () => {
   let page = null; 
 
   try {
-    browser = await puppeteer.launch({
-      executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    const launchOptions = {
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      timeout: 60000, 
-    });
+    };
+
+    // 普适化逻辑：
+    // 如果是在 macOS (您的本地环境), 则明确指定使用您自己的 Chrome
+    if (process.platform === 'darwin') { 
+      console.log('检测到 macOS 环境，将使用系统安装的 Chrome 浏览器...');
+      launchOptions.executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    }
+    // 在其他环境 (如 Linux 服务器), puppeteer 会自动寻找它自己下载的浏览器，无需指定 executablePath
+
+    browser = await puppeteer.launch(launchOptions);
 
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
     await page.goto('https://platform.inzhiyu.com/#/login', { waitUntil: 'networkidle2' });
     console.log('已打开登录页面...');
     
-    // ----- 最关键的修改：在输入前，先等待元素出现 -----
-    console.log('正在等待用户名输入框加载...');
-    await page.waitForSelector('#ruleln', { timeout: 10000 }); // 最长等待10秒
+    await page.waitForSelector('#ruleln', { timeout: 10000 });
     console.log('用户名输入框已出现，准备输入凭证...');
 
     await page.type('#ruleln', process.env.PLATFORM_USERNAME, { delay: 100 });
@@ -97,4 +161,5 @@ const runSync = async () => {
   }
 };
 
+// ----- 最关键的、之前被遗漏的导出语句 -----
 module.exports = { runSync };
