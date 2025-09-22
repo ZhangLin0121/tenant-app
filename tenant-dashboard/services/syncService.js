@@ -141,6 +141,7 @@ const runSync = async () => {
   console.log('开始执行同步任务...');
   let browser = null;
   let page = null; 
+  let success = false;
   try {
     const launchOptions = {
       headless: true,
@@ -158,10 +159,9 @@ const runSync = async () => {
     await page.type('#ruleln', process.env.PLATFORM_USERNAME, { delay: 100 });
     await page.type('#rulepwd', process.env.PLATFORM_PASSWORD, { delay: 100 });
     
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }),
-      page.click('button.el-button--primary'),
-    ]);
+    // 之寓平台为单页应用（SPA），登录后通常不会触发完整的页面导航；
+    // 直接点击登录按钮，然后通过下方的 Cookie/鉴权轮询判断登录是否成功。
+    await page.click('button.el-button--primary');
 
     // --- 关键改动：使用轮询机制，主动等待关键 Cookie 出现 ---
     const startTime = Date.now();
@@ -225,6 +225,7 @@ const runSync = async () => {
     const contractId = Number(process.env.PLATFORM_CONTRACT_ID || '1489');
     const tenants = await fetchAllTenants(page, enterpriseIds, contractId);
     await syncTenantsToDB(tenants);
+    success = true;
   } catch (error) {
     console.error('同步任务执行出错:', error);
     if (page) { await page.screenshot({ path: 'logs/error.png' }); }
@@ -240,6 +241,7 @@ const runSync = async () => {
       console.error('对账更新失败:', e);
     }
     console.log('本次同步任务执行完毕。');
+    return success;
   }
 };
 

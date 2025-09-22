@@ -6,6 +6,9 @@ const tenantSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    idCard: {
+      type: String,
+    },
     // ----- 确保所有需要的字段都被定义 -----
     guestsId: {
       type: String,
