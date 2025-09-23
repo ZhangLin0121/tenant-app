@@ -10,7 +10,7 @@ const isModalOpen = ref(false);
 const selectedRoom = ref(null);
 const selectedRoomNumber = ref(null);
 const isRefreshing = ref(false);
-const syncStatus = ref({ isSyncing: false, lastSyncAt: null });
+const syncStatus = ref({ isSyncing: false, lastSyncAt: null, cooldownRemainingMs: 0 });
 let syncTimer = null;
 // 视图筛选：是否入住
 const occupancyFilter = ref('all'); // all | checkedIn | vacant
@@ -138,6 +138,7 @@ const copyReport = async () => {
 
 // --- 房间标记（特殊用途） ---
 const roomFlags = ref({}); // { [roomNumber]: { type, note } }
+const roomFlagsReady = ref(false);
 const fetchRoomFlags = async () => {
   try {
     const res = await axios.get('/api/rooms/flags');
@@ -147,6 +148,7 @@ const fetchRoomFlags = async () => {
       roomFlags.value = map;
     }
   } catch {}
+  finally { roomFlagsReady.value = true; }
 };
 
 // --- 右键菜单状态 ---
@@ -209,6 +211,20 @@ onMounted(() => {
     window.removeEventListener('storage', onStorage);
     try { bc && bc.close && bc.close(); } catch {}
   });
+
+  // 页面打开：在不处于冷却或同步中的情况下，静默触发一次同步
+  (async () => {
+    try {
+      // 确保拿到最新状态
+      try { await fetchSyncStatus(); } catch {}
+      const cooling = Number(syncStatus.value.cooldownRemainingMs || 0) > 0;
+      if (!syncStatus.value.isSyncing && !cooling) {
+        await axios.post('/api/sync').catch(() => {});
+        // 触发后拉一次状态
+        try { await fetchSyncStatus(); } catch {}
+      }
+    } catch {}
+  })();
 });
 
 const formattedLastSync = computed(() => {
@@ -512,8 +528,8 @@ const handleRefresh = async () => {
 // (查看详情) 打开模态框
 const openModal = (roomInfo, roomNumber) => {
   if (!roomInfo) return;
-  // 已标记为“重要”的房间：隐藏入住人员信息
-  if (isVipRoom(roomNumber)) {
+  // 已标记为“不可用/重要”的房间：隐藏入住人员信息
+  if (!roomFlagsReady.value || isVipRoom(roomNumber)) {
     selectedRoom.value = [];
   } else {
     const sortedRoomInfo = [...roomInfo].sort((a, b) => Number(b.isMain) - Number(a.isMain));
@@ -543,7 +559,7 @@ const openContextMenu = (event, roomInfo, roomNumber) => {
   if (vh - top < menuH) top = Math.max(0, vh - menuH - 8);
   if (vw - left < menuW) left = Math.max(0, vw - menuW - 8);
   contextMenuPosition.value = { top: `${top}px`, left: `${left}px` };
-  // 重要房间不展示人员标签快捷项
+  // 不可用/重要房间不展示人员标签快捷项
   contextMenuRoomInfo.value = isVipRoom(roomNumber) ? [] : roomInfo;
   contextMenuRoomNumber.value = roomNumber;
   window.addEventListener('click', closeContextMenu, { once: true });
@@ -583,7 +599,7 @@ const quickSaveCustomTag = async () => {
   await quickSaveTag(value);
 };
 
-// 房间标记：设置为存储/重要/清除
+// 房间标记：设置为不可用/清除
 const setRoomFlag = async (type) => {
   const rn = contextMenuRoomNumber.value;
   if (!rn) return;
@@ -643,7 +659,7 @@ const getRoomNumberFromLayoutIndex = (floor, layoutIndex) => {
   return floor * 100 + layoutIndex;
 };
 
-// 将任何被标记的不可用房（storage/vip/其它非 none）视为“敏感房间”，隐藏人员信息
+// 将任何被标记的不可用房（vip/其它非 none）视为“敏感房间”，隐藏人员信息
 const isVipRoom = (roomNumber) => {
   const f = roomFlags.value[String(roomNumber)] || null;
   if (!f) return false;
@@ -887,7 +903,7 @@ const getRoomClass = (roomInfo, roomNumber) => {
                 class="room-cell relative w-full h-20 md:h-24 rounded-md flex items-center justify-center text-center p-1 cursor-pointer transition-all duration-200"
                 :class="getRoomClass(getRoomInfo(floor, getRoomNumberFromLayoutIndex(floor, layoutIndex)), getRoomNumberFromLayoutIndex(floor, layoutIndex))"
               >
-                <div v-if="getRoomInfo(floor, getRoomNumberFromLayoutIndex(floor, layoutIndex)) && !isVipRoom(getRoomNumberFromLayoutIndex(floor, layoutIndex))" class="text-white text-xs font-semibold break-words">
+                <div v-if="roomFlagsReady && getRoomInfo(floor, getRoomNumberFromLayoutIndex(floor, layoutIndex)) && !isVipRoom(getRoomNumberFromLayoutIndex(floor, layoutIndex))" class="text-white text-xs font-semibold break-words">
                   {{ getRoomInfo(floor, getRoomNumberFromLayoutIndex(floor, layoutIndex)).find(t => t.isMain)?.tenantName || getRoomInfo(floor, getRoomNumberFromLayoutIndex(floor, layoutIndex))[0]?.tenantName }}
                   <span v-if="getRoomInfo(floor, getRoomNumberFromLayoutIndex(floor, layoutIndex)).length > 1" class="font-bold text-yellow-300"> +{{ getRoomInfo(floor, getRoomNumberFromLayoutIndex(floor, layoutIndex)).length - 1 }}</span>
                 </div>
@@ -946,7 +962,7 @@ const getRoomClass = (roomInfo, roomNumber) => {
           <li class="border-t my-1"></li>
         </template>
         <li class="px-4 py-2 text-gray-500">房间标记</li>
-        <li @click="setRoomFlag('vip')" class="px-4 py-2 hover:bg-gray-100 cursor-pointer">标记为重要（不可用）</li>
+        <li @click="setRoomFlag('vip')" class="px-4 py-2 hover:bg-gray-100 cursor-pointer">标记为不可用</li>
         <li @click="clearRoomFlag" class="px-4 py-2 hover:bg-gray-100 cursor-pointer text-gray-500">清除房间标记</li>
         <li class="border-t my-1"></li>
         <li class="px-4 py-2 text-gray-500">房间标签</li>

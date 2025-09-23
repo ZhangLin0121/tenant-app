@@ -147,9 +147,34 @@ const runSync = async () => {
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     };
+    // 优先探测系统浏览器，避免安装阶段无法下载 Chromium 的问题
+    const fsx = require('fs');
     if (process.platform === 'darwin') { 
-      console.log('检测到 macOS 环境，将使用系统安装的 Chrome 浏览器...');
-      launchOptions.executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+      const macChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+      try {
+        if (fsx.existsSync(macChrome)) {
+          console.log('检测到 macOS 环境，使用系统 Chrome。');
+          launchOptions.executablePath = macChrome;
+        } else {
+          console.log('未找到系统 Chrome，改用 Puppeteer 内置 Chromium。');
+        }
+      } catch { /* ignore */ }
+    } else if (process.platform === 'linux') {
+      const candidates = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        process.env.CHROME_PATH,
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/snap/bin/chromium'
+      ].filter(Boolean);
+      for (const p of candidates) {
+        try { if (p && fsx.existsSync(p)) { launchOptions.executablePath = p; console.log('检测到 Linux 浏览器：', p); break; } } catch {}
+      }
+      if (!launchOptions.executablePath) {
+        console.log('未检测到系统 Chrome/Chromium，将尝试使用 Puppeteer 内置 Chromium。');
+      }
     }
     browser = await puppeteer.launch(launchOptions);
     page = await browser.newPage();
@@ -343,7 +368,22 @@ async function runFetchOnly() {
   let browser = null; let page = null;
   try {
     const launchOptions = { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] };
-    if (process.platform === 'darwin') { launchOptions.executablePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'; }
+    const fsx = require('fs');
+    if (process.platform === 'darwin') {
+      const macChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+      try { if (fsx.existsSync(macChrome)) { launchOptions.executablePath = macChrome; } } catch {}
+    } else if (process.platform === 'linux') {
+      const candidates = [
+        process.env.PUPPETEER_EXECUTABLE_PATH,
+        process.env.CHROME_PATH,
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium',
+        '/usr/bin/chromium-browser',
+        '/snap/bin/chromium'
+      ].filter(Boolean);
+      for (const p of candidates) { try { if (p && fsx.existsSync(p)) { launchOptions.executablePath = p; break; } } catch {} }
+    }
     browser = await puppeteer.launch(launchOptions);
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });

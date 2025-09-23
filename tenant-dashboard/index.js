@@ -15,6 +15,7 @@ const connectDB = require('./config/db');
 const { runSync, reconcileStudentsWithTenants } = require('./services/syncService.js');
 const roomRoutes = require('./routes/room.routes');
 const Student = require('./models/student.model');
+const Tenant = require('./models/tenant.model');
 // === 已修复：使用您项目中的正确文件名 ===
 const tenantRoutes = require('./routes/tenant.routes.js'); 
 const studentRoutes = require('./routes/student.routes.js');
@@ -36,11 +37,20 @@ let isSyncing = false;
 let lastSyncAt = null; // ISO 字符串，记录最近一次同步完成时间
 let cooldownUntil = 0; // 毫秒时间戳：冷却期内拒绝触发，但不算正在同步
 
-// 状态查询
-app.get('/api/sync/status', (req, res) => {
-  const now = Date.now();
-  const cooldownRemainingMs = Math.max(0, cooldownUntil - now);
-  res.json({ success: true, data: { isSyncing, lastSyncAt, cooldownRemainingMs } });
+// 状态查询（若内存无时间，则回退到 DB 最新快照时间）
+app.get('/api/sync/status', async (_req, res) => {
+  try {
+    const now = Date.now();
+    const cooldownRemainingMs = Math.max(0, cooldownUntil - now);
+    let effectiveLast = lastSyncAt;
+    if (!effectiveLast) {
+      const latest = await Tenant.findOne({}, { updatedAt: 1 }, { sort: { updatedAt: -1 } }).lean();
+      if (latest?.updatedAt) effectiveLast = new Date(latest.updatedAt).toISOString();
+    }
+    res.json({ success: true, data: { isSyncing, lastSyncAt: effectiveLast || null, cooldownRemainingMs } });
+  } catch (e) {
+    res.json({ success: true, data: { isSyncing, lastSyncAt: lastSyncAt || null, cooldownRemainingMs: Math.max(0, cooldownUntil - Date.now()) } });
+  }
 });
 
 // 手动触发同步
