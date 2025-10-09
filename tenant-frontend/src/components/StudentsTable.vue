@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue';
-import axios from 'axios';
+import api from '../utils/api.js';
 
 const items = ref([]);
 const total = ref(0);
@@ -51,7 +51,7 @@ const filteredTagOptions = computed(() => {
 
 const fetchTags = async () => {
   try {
-    const res = await axios.get('/api/students/tags');
+    const res = await api.get('/api/students/tags');
     if (res.data?.success) {
       // 保留空字符串，用于显示“未分组”（否则手动分项求和会漏掉未标记的人）
       const arr = Array.isArray(res.data.data) ? res.data.data : [];
@@ -66,7 +66,7 @@ const fetchList = async () => {
     const params = { tag: activeTag.value, q: q.value, page: page.value, pageSize: pageSize.value };
     if (isCheckedInFilter.value !== 'all') params.isCheckedIn = isCheckedInFilter.value;
     if (onlyTagged.value) params.excludeEmptyTag = true;
-    const res = await axios.get('/api/students', { params });
+    const res = await api.get('/api/students', { params });
     if (res.data?.success) {
       items.value = res.data.data.items;
       total.value = res.data.data.total;
@@ -110,9 +110,9 @@ const save = async () => {
   if (!form.value.name) return alert('姓名必填');
   try {
     if (editing.value) {
-      await axios.patch(`/api/students/${editing.value}`, form.value);
+      await api.patch(`/api/students/${editing.value}`, form.value);
     } else {
-      await axios.post('/api/students', form.value);
+      await api.post('/api/students', form.value);
     }
     showModal.value = false;
     await fetchTags();
@@ -137,7 +137,7 @@ const doImport = async () => {
   }
 
   try {
-    await axios.post('/api/students/bulk', arr);
+    await api.post('/api/students/bulk', arr);
     showImport.value = false;
     await fetchTags();
     await fetchList();
@@ -150,7 +150,7 @@ const doImport = async () => {
 const removeOne = async (row) => {
   if (!confirm(`确认删除学生「${row.name}」？`)) return;
   try {
-    await axios.delete(`/api/students/${row._id}`);
+    await api.delete(`/api/students/${row._id}`);
     await fetchTags();
     await fetchList();
     notifyStudentsChanged();
@@ -191,7 +191,7 @@ const onFileChange = async (e) => {
     if (!Array.isArray(json) || json.length === 0) {
       return alert('表格为空');
     }
-    await axios.post('/api/students/bulk', json);
+    await api.post('/api/students/bulk', json);
     await fetchTags();
     await fetchList();
     alert('导入成功');

@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted, computed } from 'vue';
-import axios from 'axios';
+import api from '../utils/api.js';
 
 // --- 状态变量 ---
 const buildingData = ref({});
@@ -13,7 +13,11 @@ const isRefreshing = ref(false);
 const syncStatus = ref({ isSyncing: false, lastSyncAt: null, cooldownRemainingMs: 0 });
 let syncTimer = null;
 // 视图筛选：是否入住
-const occupancyFilter = ref('all'); // all | checkedIn | vacant
+const occupancyFilters = ref({
+  all: true,
+  checkedIn: false,
+  vacant: false
+});
 
 // --- 汇报统计 ---
 const stats = ref({ totalStudents: 0, perTagTotal: {}, checkedIn: 0, perTagCheckedIn: {} });
@@ -83,7 +87,7 @@ const reportText = computed(() => {
   const unavailableRooms = areaStats.un50 + areaStats.un35;
 
   return [
-    `截至${tsDate}，共${totalRooms}间，已使用${usedRooms}间，剩余${freeRooms}间，不可用${unavailableRooms}间。其中2022级工程硕博士${roomCategoryCounts['2022级工程硕博士'] || 0}间，23级工程硕博士${roomCategoryCounts['2023级工程硕博士'] || 0}间，24级工程硕博士${roomCategoryCounts['2024级工程硕博士'] || 0}间，中信科${roomCategoryCounts['中信科'] || 0}间，实习实践${roomCategoryCounts['实习实践'] || 0}间，未标记${roomCategoryCounts['未标记'] || 0}间。`,
+    `截至${tsDate}，共${totalRooms}间，已使用${usedRooms}间，剩余${freeRooms}间，不可用${unavailableRooms}间。其中2022级工程硕博士${roomCategoryCounts['2022级工程硕博士'] || 0}间，2023级工程硕博士${roomCategoryCounts['2023级工程硕博士'] || 0}间，2024级工程硕博士${roomCategoryCounts['2024级工程硕博士'] || 0}间，中信科${roomCategoryCounts['中信科'] || 0}间，实习实践${roomCategoryCounts['实习实践'] || 0}间，未标记${roomCategoryCounts['未标记'] || 0}间。`,
     (() => {
       const ptTotal = stats.value.perTagTotal || {};
       const ptIn = stats.value.perTagCheckedIn || {};
@@ -116,7 +120,7 @@ const copyReport = async () => {
   const text = reportText.value || '';
   // 优先使用安全环境的 Clipboard API
   if (navigator.clipboard && window.isSecureContext) {
-    try { await navigator.clipboard.writeText(text); alert('已复制'); return; } catch { /* fallback */ }
+    try { await navigator.clipboard.writeText(text); return; } catch { /* fallback */ }
   }
   // 回退方案：创建隐藏 textarea + execCommand('copy')，适配 http/内网
   try {
@@ -131,7 +135,7 @@ const copyReport = async () => {
     ta.select();
     const ok = document.execCommand('copy');
     document.body.removeChild(ta);
-    if (ok) { alert('已复制'); return; }
+    if (ok) { return; }
   } catch { /* ignore */ }
   alert('复制失败，请手动选择文本复制');
 };
@@ -141,7 +145,7 @@ const roomFlags = ref({}); // { [roomNumber]: { type, note } }
 const roomFlagsReady = ref(false);
 const fetchRoomFlags = async () => {
   try {
-    const res = await axios.get('/api/rooms/flags');
+    const res = await api.get('/api/rooms/flags');
     if (res.data?.success && Array.isArray(res.data.data)) {
       const map = {};
       for (const it of res.data.data) map[String(it.roomNumber)] = it;
@@ -166,7 +170,7 @@ const totalRooms = 238;
 
 const fetchSyncStatus = async () => {
   try {
-    const res = await axios.get('/api/sync/status');
+    const res = await api.get('/api/sync/status');
     if (res.data?.success) {
       syncStatus.value = res.data.data;
     }
@@ -219,7 +223,7 @@ onMounted(() => {
       try { await fetchSyncStatus(); } catch {}
       const cooling = Number(syncStatus.value.cooldownRemainingMs || 0) > 0;
       if (!syncStatus.value.isSyncing && !cooling) {
-        await axios.post('/api/sync').catch(() => {});
+        await api.post('/api/sync').catch(() => {});
         // 触发后拉一次状态
         try { await fetchSyncStatus(); } catch {}
       }
@@ -240,7 +244,7 @@ onUnmounted(() => {
 const fetchData = async () => {
   isLoading.value = true;
   try {
-    const response = await axios.get('/api/tenants');
+    const response = await api.get('/api/tenants');
     if (response.data.success) {
       buildingData.value = response.data.data;
     } else {
@@ -258,7 +262,7 @@ const fetchData = async () => {
 
 const fetchStats = async () => {
   try {
-    const res = await axios.get('/api/stats');
+    const res = await api.get('/api/stats');
     if (res.data?.success) stats.value = res.data.data || stats.value;
   } catch {}
 };
@@ -513,7 +517,7 @@ const handleRefresh = async () => {
   }
   isRefreshing.value = true;
   try {
-    await axios.post('/api/sync');
+    await api.post('/api/sync');
     // 立即拉一次状态，给用户更及时反馈
     try { await fetchSyncStatus(); } catch {}
     alert('已成功触发后台同步任务！数据将在大约1-2分钟后更新。请稍后手动刷新页面查看最新数据。');
@@ -580,7 +584,7 @@ const quickSaveTag = async (newTag) => {
   if (mainTenant.tag === newTag) return;
 
   try {
-    await axios.patch(`/api/students/by-tenant/${mainTenant._id}/tag`, { tag: newTag });
+    await api.patch(`/api/students/by-tenant/${mainTenant._id}/tag`, { tag: newTag });
     await fetchData(); 
   } catch (err) {
     alert('标签快速保存失败');
@@ -604,7 +608,7 @@ const setRoomFlag = async (type) => {
   const rn = contextMenuRoomNumber.value;
   if (!rn) return;
   try {
-    await axios.put(`/api/rooms/flags/${rn}`, { type });
+    await api.put(`/api/rooms/flags/${rn}`, { type });
     await fetchRoomFlags();
     await fetchData();
   } catch { alert('房间标记失败'); }
@@ -612,7 +616,7 @@ const setRoomFlag = async (type) => {
 };
 const clearRoomFlag = async () => {
   const rn = contextMenuRoomNumber.value; if (!rn) return;
-  try { await axios.delete(`/api/rooms/flags/${rn}`); await fetchRoomFlags(); await fetchData(); }
+  try { await api.delete(`/api/rooms/flags/${rn}`); await fetchRoomFlags(); await fetchData(); }
   catch { alert('清除标记失败'); }
   finally { closeContextMenu(); }
 };
@@ -621,7 +625,7 @@ const clearRoomFlag = async () => {
 const setRoomTag = async (roomTag) => {
   const rn = contextMenuRoomNumber.value; if (!rn) return;
   try {
-    await axios.put(`/api/rooms/tags/${rn}`, { roomTag });
+    await api.put(`/api/rooms/tags/${rn}`, { roomTag });
     await fetchRoomFlags();
     await fetchData();
   } catch { alert('设置房间标签失败'); }
@@ -634,7 +638,7 @@ const setRoomTagCustom = async () => {
   if (input === null) return;
   const value = String(input).trim().slice(0, 50);
   try {
-    await axios.put(`/api/rooms/tags/${rn}`, { roomTag: value });
+    await api.put(`/api/rooms/tags/${rn}`, { roomTag: value });
     await fetchRoomFlags();
     await fetchData();
   } catch { alert('设置房间标签失败'); }
@@ -642,7 +646,7 @@ const setRoomTagCustom = async () => {
 };
 const clearRoomTag = async () => {
   const rn = contextMenuRoomNumber.value; if (!rn) return;
-  try { await axios.delete(`/api/rooms/tags/${rn}`); await fetchRoomFlags(); await fetchData(); }
+  try { await api.delete(`/api/rooms/tags/${rn}`); await fetchRoomFlags(); await fetchData(); }
   catch { alert('清除房间标签失败'); }
   finally { closeContextMenu(); }
 };
@@ -676,9 +680,17 @@ const getRoomInfo = (floor, roomNumber) => {
 const matchesFilter = (floor, roomNumber) => {
   const flagged = !!roomFlags.value[String(roomNumber)];
   const hasTenant = !!(buildingData.value[floor]?.[roomNumber]);
-  if (occupancyFilter.value === 'checkedIn') return hasTenant;
-  if (occupancyFilter.value === 'vacant') return !hasTenant && !flagged;
-  return true; // all
+
+  // 如果全部选中，显示所有房间
+  if (occupancyFilters.value.all) return true;
+
+  // 如果选中已入住，显示有租客的房间
+  if (occupancyFilters.value.checkedIn && hasTenant) return true;
+
+  // 如果选中空余，显示无租客且未标记的房间
+  if (occupancyFilters.value.vacant && !hasTenant && !flagged) return true;
+
+  return false;
 };
 
 const getRoomClass = (roomInfo, roomNumber) => {
@@ -701,13 +713,22 @@ const getRoomClass = (roomInfo, roomNumber) => {
   <div class="p-4 md:p-8 bg-gray-50 min-h-screen pb-16">
     <div class="flex flex-wrap justify-between items-center mb-6 max-w-screen-2xl mx-auto">
       <h1 class="text-3xl font-bold text-gray-800 mb-4 md:mb-0">租客楼栋看板</h1>
-      <div class="flex items-center gap-2 order-3 md:order-2 w-full md:w-auto mt-3 md:mt-0">
+      <div class="flex items-center gap-4 order-3 md:order-2 w-full md:w-auto mt-3 md:mt-0">
         <label class="text-sm text-gray-600">是否入住</label>
-        <select v-model="occupancyFilter" class="border rounded px-2 py-1 text-sm">
-          <option value="all">全部</option>
-          <option value="checkedIn">仅已入住</option>
-          <option value="vacant">仅空余</option>
-        </select>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-1 text-sm cursor-pointer">
+            <input type="checkbox" v-model="occupancyFilters.all" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+            <span>全部</span>
+          </label>
+          <label class="flex items-center gap-1 text-sm cursor-pointer">
+            <input type="checkbox" v-model="occupancyFilters.checkedIn" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+            <span>已入住</span>
+          </label>
+          <label class="flex items-center gap-1 text-sm cursor-pointer">
+            <input type="checkbox" v-model="occupancyFilters.vacant" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+            <span>空余</span>
+          </label>
+        </div>
       </div>
       <button 
         @click="handleRefresh" 
