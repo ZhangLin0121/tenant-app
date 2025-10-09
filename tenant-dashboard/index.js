@@ -11,6 +11,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const express = require('express');
+const mongoose = require('mongoose');
 const connectDB = require('./config/db');
 const { runSync, reconcileStudentsWithTenants } = require('./services/syncService.js');
 const roomRoutes = require('./routes/room.routes');
@@ -43,7 +44,7 @@ app.get('/api/sync/status', async (_req, res) => {
     const now = Date.now();
     const cooldownRemainingMs = Math.max(0, cooldownUntil - now);
     let effectiveLast = lastSyncAt;
-    if (!effectiveLast) {
+    if (!effectiveLast && mongoose.connection.readyState === 1) {
       const latest = await Tenant.findOne({}, { updatedAt: 1 }, { sort: { updatedAt: -1 } }).lean();
       if (latest?.updatedAt) effectiveLast = new Date(latest.updatedAt).toISOString();
     }
@@ -119,6 +120,15 @@ app.get('/api/stats', async (_req, res) => {
   }
 });
 
+
+// 健康检查端点
+app.get('/api/health', (_req, res) => {
+  res.json({
+    success: true,
+    status: 'running',
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
+  });
+});
 
 // ---- 根路由 ----
 // ---- 前端静态资源（如果存在 dist，则直接提供前端）----
