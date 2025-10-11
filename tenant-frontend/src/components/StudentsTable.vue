@@ -7,21 +7,19 @@ const total = ref(0);
 const page = ref(1);
 const pageSize = ref(20);
 const tags = ref([]);
-const activeTag = ref('');
+const activeTag = ref('all');
 const q = ref('');
 const loading = ref(false);
-const isCheckedInFilter = ref('all'); // 'all' | 'true' | 'false'
+const checkedInOnly = ref(false); // 仅显示已入住学生
 const onlyTagged = ref(true); // “仅有标签”统计（默认开启，满足“已入住且有标签”的口径）
 
 const showModal = ref(false);
-const showImport = ref(false);
 const editing = ref(null);
 const form = ref({
   name: '', mobile: '', idCard: '', education: '', university: '', practiceCompany: '',
-  isCheckedIn: false, roomNumber: '', checkInAt: '', checkOutAt: '',
-  tag: '', studentNo: '', grade: '', major: '', email: ''
+  checkInAt: '', checkOutAt: '',
+  tag: '', major: ''
 });
-const bulkJsonText = ref('[\n  { "姓名": "张三", "电话": "13800000001", "身份证": "4201...", "学历": "硕士", "毕业院校": "XX大学", "实践企业": "XX公司", "是否入住": "是", "入住房间号": "1203", "入住时间": "2024-09-01", "离开时间": "" }\n]');
 
 // 常用标签（与看板一致）+ 当前已有标签去重合并，供编辑选择
 const allowedTags = ['2022级工程硕博士','2023级工程硕博士','2024级工程硕博士','实习实践'];
@@ -63,8 +61,9 @@ const fetchTags = async () => {
 const fetchList = async () => {
   loading.value = true;
   try {
-    const params = { tag: activeTag.value, q: q.value, page: page.value, pageSize: pageSize.value };
-    if (isCheckedInFilter.value !== 'all') params.isCheckedIn = isCheckedInFilter.value;
+    const params = { q: q.value, page: page.value, pageSize: pageSize.value };
+    if (activeTag.value !== 'all') params.tag = activeTag.value;
+    if (checkedInOnly.value) params.isCheckedIn = 'true';
     if (onlyTagged.value) params.excludeEmptyTag = true;
     const res = await api.get('/api/students', { params });
     if (res.data?.success) {
@@ -94,7 +93,7 @@ const headerMap = {
 
 const openCreate = () => {
   editing.value = null;
-  form.value = { name: '', mobile: '', idCard: '', education: '', university: '', practiceCompany: '', isCheckedIn: false, roomNumber: '', checkInAt: '', checkOutAt: '', tag: '' };
+  form.value = { name: '', mobile: '', idCard: '', education: '', university: '', practiceCompany: '', checkInAt: '', checkOutAt: '', tag: '' };
   showModal.value = true;
 };
 
@@ -108,11 +107,17 @@ const openEdit = (row) => {
 
 const save = async () => {
   if (!form.value.name) return alert('姓名必填');
+  const payload = { ...form.value };
+  delete payload.studentNo;
+  delete payload.grade;
+  delete payload.email;
+  delete payload.isCheckedIn;
+  delete payload.roomNumber;
   try {
     if (editing.value) {
-      await api.patch(`/api/students/${editing.value}`, form.value);
+      await api.patch(`/api/students/${editing.value}`, payload);
     } else {
-      await api.post('/api/students', form.value);
+      await api.post('/api/students', payload);
     }
     showModal.value = false;
     await fetchTags();
@@ -123,29 +128,6 @@ const save = async () => {
   }
 };
 
-const doImport = async () => {
-  let arr = [];
-  try {
-    const parsed = JSON.parse(bulkJsonText.value || '[]');
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return alert('请粘贴一个非空的 JSON 数组');
-    }
-    // 直接传给后端做自适应映射
-    arr = parsed;
-  } catch (e) {
-    return alert('JSON 解析失败，请检查格式');
-  }
-
-  try {
-    await api.post('/api/students/bulk', arr);
-    showImport.value = false;
-    await fetchTags();
-    await fetchList();
-    notifyStudentsChanged();
-  } catch (e) {
-    alert('导入失败，请检查数据结构');
-  }
-};
 
 const removeOne = async (row) => {
   if (!confirm(`确认删除学生「${row.name}」？`)) return;
@@ -187,10 +169,19 @@ const onFileChange = async (e) => {
     const sheetName = wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
     // Use formatted values to keep dates as strings (e.g., YYYY-MM-DD)
-    const json = window.XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+    let json = window.XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
     if (!Array.isArray(json) || json.length === 0) {
       return alert('表格为空');
     }
+    json = json.map((row) => {
+      const copy = { ...row };
+      delete copy.email; delete copy['邮箱'];
+      delete copy.grade; delete copy['年级'];
+      delete copy.studentNo; delete copy['学号'];
+      delete copy.isCheckedIn; delete copy['是否入住'];
+      delete copy.roomNumber; delete copy['入住房间号'];
+      return copy;
+    });
     await api.post('/api/students/bulk', json);
     await fetchTags();
     await fetchList();
@@ -229,7 +220,7 @@ const downloadExcelTemplate = async () => {
   try {
     await ensureXLSX();
     const header = [
-      '姓名','电话','身份证','标签','学历','毕业院校','实践企业','是否入住','入住房间号','入住时间','离开时间','学号','邮箱','年级','专业'
+      '姓名','电话','身份证','标签','学历','毕业院校','实践企业','入住时间','离开时间','专业'
     ];
     const ws = window.XLSX.utils.aoa_to_sheet([header]);
     // 设置列宽更友好
@@ -240,11 +231,10 @@ const downloadExcelTemplate = async () => {
     const tipRows = [
       ['使用说明'],
       ['1. 仅第一行作为表头，请不要删除或更改列名。'],
-      ['2. 是否入住：填写 是/否。'],
+      ['2. 是否入住由系统同步的快照计算，无需在表格中填写。'],
       ['3. 入住/离开时间：使用 YYYY-MM-DD 格式（例如 2024-09-01）。'],
-      ['4. 入住房间号：例如 1203。'],
-      ['5. 标签：可输入工程硕博士/实习实践/或自定义标签。'],
-      ['6. 仅姓名必填；建议至少提供电话或身份证以便去重合并。'],
+      ['4. 标签：可输入工程硕博士/实习实践/或自定义标签。'],
+      ['5. 仅姓名必填；建议至少提供电话或身份证以便去重合并。'],
       ['7. 只会读取第一个工作表（导入模板）的数据，说明页不会被导入。'],
     ];
     const ws2 = window.XLSX.utils.aoa_to_sheet(tipRows);
@@ -269,17 +259,15 @@ const notifyStudentsChanged = () => {
   <div class="bg-white rounded-lg shadow p-4">
   <div class="flex flex-wrap items-center gap-2 mb-4">
     <div class="flex gap-2 overflow-x-auto">
-      <button class="px-3 py-1 rounded border" :class="activeTag==='' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'" @click="activeTag=''; page=1; fetchList()">全部</button>
+      <button class="px-3 py-1 rounded border" :class="activeTag==='all' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'" @click="activeTag='all'; page=1; fetchList()">全部</button>
       <button v-for="t in displayTags" :key="'tag_'+t" class="px-3 py-1 rounded border" :class="activeTag===t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700'" @click="activeTag=t; page=1; fetchList()">{{ t || '未分组' }}</button>
     </div>
     <div class="flex-1"></div>
     <!-- 顶部总数摘要，避免滚动到底部查看 -->
     <div class="text-sm text-gray-600 whitespace-nowrap">共 {{ total }} 条</div>
-    <select v-model="isCheckedInFilter" @change="page=1; fetchList()" class="border rounded px-2 py-1 text-sm">
-      <option value="all">全部</option>
-      <option value="true">已入住</option>
-      <option value="false">未入住</option>
-    </select>
+    <label class="text-sm flex items-center gap-1">
+      <input type="checkbox" v-model="checkedInOnly" @change="page=1; fetchList()" /> 仅已入住
+    </label>
     <label class="text-sm flex items-center gap-1">
       <input type="checkbox" v-model="onlyTagged" @change="page=1; fetchList()" /> 仅有标签
     </label>
@@ -289,8 +277,7 @@ const notifyStudentsChanged = () => {
       <input ref="fileInput" type="file" accept=".xlsx,.xls,.csv" class="hidden" @change="onFileChange" />
       <button @click="downloadExcelTemplate" class="px-3 py-1 rounded bg-gray-700 text-white">下载模板</button>
       <button @click="triggerExcel" class="px-3 py-1 rounded bg-amber-600 text-white">导入Excel</button>
-      <button @click="showImport=true" class="px-3 py-1 rounded bg-emerald-600 text-white">导入JSON</button>
-    </div>
+      </div>
 
     <div v-if="loading" class="text-gray-500 text-sm">加载中...</div>
 
@@ -349,13 +336,6 @@ const notifyStudentsChanged = () => {
               </div>
             </div>
           </label>
-          <label class="text-sm">是否入住
-            <select v-model="form.isCheckedIn" class="mt-1 border rounded px-2 py-1 w-full">
-              <option :value="true">是</option>
-              <option :value="false">否</option>
-            </select>
-          </label>
-          <label class="text-sm">入住房间号<input v-model="form.roomNumber" class="mt-1 border rounded px-2 py-1 w-full" /></label>
           <label class="text-sm">入住时间<input type="date" v-model="form.checkInAt" class="mt-1 border rounded px-2 py-1 w-full" /></label>
           <label class="text-sm">离开时间<input type="date" v-model="form.checkOutAt" class="mt-1 border rounded px-2 py-1 w-full" /></label>
         </div>
@@ -367,18 +347,6 @@ const notifyStudentsChanged = () => {
       </div>
     </div>
 
-    <!-- Import JSON Modal -->
-    <div v-if="showImport" @click.self="showImport=false" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-lg shadow p-4 w-full max-w-2xl">
-        <h3 class="text-lg font-bold mb-3">批量导入（JSON 数组）</h3>
-        <p class="text-xs text-gray-600 mb-2">粘贴形如 <code>[{...},{...}]</code> 的数组；支持中文字段：姓名, 电话, 身份证, 学历, 毕业院校, 实践企业, 是否入住, 入住房间号, 入住时间, 离开时间；也支持英文等价字段。</p>
-        <textarea v-model="bulkJsonText" class="mt-1 border rounded px-2 py-1 w-full font-mono text-xs h-64"></textarea>
-        <div class="mt-3 flex justify-end gap-2">
-          <button class="px-3 py-1 border rounded" @click="showImport=false">取消</button>
-          <button class="px-3 py-1 bg-emerald-600 text-white rounded" @click="doImport">导入</button>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 

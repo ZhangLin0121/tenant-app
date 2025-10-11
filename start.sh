@@ -9,8 +9,8 @@
 #   停止: ./start.sh stop
 
 # --- 配置 ---
-BACKEND_DIR="/Users/zhangzhiyuan/vscode/tenant-app/tenant-dashboard"
-FRONTEND_DIR="/Users/zhangzhiyuan/vscode/tenant-app/tenant-frontend"
+BACKEND_DIR="tenant-dashboard"
+FRONTEND_DIR="tenant-frontend"
 BACKEND_PORT=5001
 FRONTEND_PORT=5173
 

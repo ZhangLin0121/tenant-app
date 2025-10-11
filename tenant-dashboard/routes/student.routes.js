@@ -130,12 +130,6 @@ router.post('/bulk', async (req, res) => {
     const list = Array.isArray(req.body) ? req.body : [];
     if (list.length === 0) return res.status(400).json({ success: false, message: '空数据' });
 
-    const mapYes = (v) => {
-      if (typeof v === 'boolean') return v;
-      const s = String(v || '').trim();
-      const low = s.toLowerCase();
-      return ['是', '已入住', 'true', '1', 'y', 'yes'].includes(low) || ['是', '已入住'].includes(s);
-    };
     const parseDate = (v) => {
       if (!v) return undefined;
       if (typeof v === 'string') {
@@ -163,13 +157,9 @@ router.post('/bulk', async (req, res) => {
       const education = x.education ?? x['学历'] ?? '';
       const university = x.university ?? x['毕业院校'] ?? '';
       const practiceCompany = x.practiceCompany ?? x['实践企业'] ?? '';
-      const isCheckedIn = x.isCheckedIn ?? mapYes(x['是否入住']);
-      const roomNumber = str(x.roomNumber ?? x['入住房间号'] ?? '');
+      const roomNumber = '';
       const checkInAt = parseDate(x.checkInAt ?? x['入住时间']);
       const checkOutAt = parseDate(x.checkOutAt ?? x['离开时间']);
-      const studentNo = x.studentNo ?? x['学号'] ?? '';
-      const email = x.email ?? x['邮箱'] ?? '';
-      const grade = x.grade ?? x['年级'] ?? '';
       const major = x.major ?? x['专业'] ?? '';
 
       return {
@@ -180,13 +170,8 @@ router.post('/bulk', async (req, res) => {
         education,
         university,
         practiceCompany,
-        isCheckedIn: typeof isCheckedIn === 'boolean' ? isCheckedIn : false,
-        roomNumber,
         checkInAt,
         checkOutAt,
-        studentNo,
-        email,
-        grade,
         major,
       };
     }).filter(d => d.name || d.mobile || d.idCard);
@@ -238,16 +223,12 @@ router.post('/bulk', async (req, res) => {
       setIfVal('education', doc.education);
       setIfVal('university', doc.university);
       setIfVal('practiceCompany', doc.practiceCompany);
-      setIfVal('isCheckedIn', doc.isCheckedIn);
-      setIfVal('roomNumber', doc.roomNumber);
       setIfVal('checkInAt', doc.checkInAt);
       setIfVal('checkOutAt', doc.checkOutAt);
-      setIfVal('studentNo', doc.studentNo);
-      setIfVal('grade', doc.grade);
       setIfVal('major', doc.major);
-      setIfVal('email', doc.email);
 
       const insertBase = {};
+      insertBase.isCheckedIn = false;
       if (doc.name) insertBase.name = doc.name;
       if (doc.mobile) insertBase.mobile = doc.mobile;
       if (doc.idCard) insertBase.idCard = doc.idCard;

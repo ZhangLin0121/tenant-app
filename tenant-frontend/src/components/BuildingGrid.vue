@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, computed, watch, watchEffect } from 'vue';
 import api from '../utils/api.js';
 
 // --- 状态变量 ---
@@ -17,6 +17,32 @@ const occupancyFilters = ref({
   all: true,
   checkedIn: false,
   vacant: false
+});
+
+watch(() => occupancyFilters.value.all, (val) => {
+  if (val) {
+    occupancyFilters.value.checkedIn = false;
+    occupancyFilters.value.vacant = false;
+  }
+});
+
+watch(() => occupancyFilters.value.checkedIn, (val) => {
+  if (val) {
+    occupancyFilters.value.all = false;
+  }
+});
+
+watch(() => occupancyFilters.value.vacant, (val) => {
+  if (val) {
+    occupancyFilters.value.all = false;
+  }
+});
+
+watchEffect(() => {
+  const filters = occupancyFilters.value;
+  if (!filters.all && !filters.checkedIn && !filters.vacant) {
+    occupancyFilters.value.all = true;
+  }
 });
 
 // --- 汇报统计 ---
@@ -86,35 +112,68 @@ const reportText = computed(() => {
   const freeRooms = areaStats.free50x + areaStats.free35x;
   const unavailableRooms = areaStats.un50 + areaStats.un35;
 
+  // 房间分类统计：只显示非零项
+  const roomCategoryParts = [];
+  if (roomCategoryCounts['2022级工程硕博士'] > 0) roomCategoryParts.push(`2022级工程硕博士${roomCategoryCounts['2022级工程硕博士']}间`);
+  if (roomCategoryCounts['2023级工程硕博士'] > 0) roomCategoryParts.push(`2023级工程硕博士${roomCategoryCounts['2023级工程硕博士']}间`);
+  if (roomCategoryCounts['2024级工程硕博士'] > 0) roomCategoryParts.push(`2024级工程硕博士${roomCategoryCounts['2024级工程硕博士']}间`);
+  if (roomCategoryCounts['中信科'] > 0) roomCategoryParts.push(`中信科${roomCategoryCounts['中信科']}间`);
+  if (roomCategoryCounts['实习实践'] > 0) roomCategoryParts.push(`实习实践${roomCategoryCounts['实习实践']}间`);
+  if (roomCategoryCounts['未标记'] > 0) roomCategoryParts.push(`未标记${roomCategoryCounts['未标记']}间`);
+
+  const roomCategoryText = roomCategoryParts.length > 0 ? `其中${roomCategoryParts.join('，')}。` : '';
+
+  // 工程硕博士统计：只显示非零项
+  const ptTotal = stats.value.perTagTotal || {};
+  const ptIn = stats.value.perTagCheckedIn || {};
+  const t22 = Number(ptTotal['2022级工程硕博士'] || 0);
+  const t23 = Number(ptTotal['2023级工程硕博士'] || 0);
+  const t24 = Number(ptTotal['2024级工程硕博士'] || 0);
+  const tzx = Number(ptTotal['中信科'] || 0);
+  const i22 = Number(ptIn['2022级工程硕博士'] || 0);
+  const i23 = Number(ptIn['2023级工程硕博士'] || 0);
+  const i24 = Number(ptIn['2024级工程硕博士'] || 0);
+  const izx = Number(ptIn['中信科'] || 0);
+
+  const totalEng = t22 + t23 + t24 + tzx;
+  const inEng = i22 + i23 + i24 + izx;
+
+  const engParts = [];
+  if (t22 > 0) engParts.push(`22级${t22}人`);
+  if (t23 > 0) engParts.push(`23级${t23}人`);
+  if (t24 > 0) engParts.push(`24级${t24}人`);
+  if (tzx > 0) engParts.push(`中信科${tzx}人`);
+
+  const engInParts = [];
+  if (i22 > 0) engInParts.push(`22级${i22}人`);
+  if (i23 > 0) engInParts.push(`23级${i23}人`);
+  if (i24 > 0) engInParts.push(`24级${i24}人`);
+  if (izx > 0) engInParts.push(`中信科${izx}人`);
+
+  const engText = totalEng > 0 ? `累计保障工程硕博士${totalEng}人${engParts.length > 0 ? `，其中${engParts.join('，')}` : ''}；当前在住${inEng}人${engInParts.length > 0 ? `，其中${engInParts.join('，')}` : ''}。` : '';
+
+  // 实习实践统计
+  const internshipTotal = Number(ptTotal['实习实践'] || 0);
+  const internshipIn = Number(ptIn['实习实践'] || 0);
+  const internshipText = internshipTotal > 0 ? `累计保障实习实践${internshipTotal}人，当前在住${internshipIn}人。` : '';
+
+  // 面积统计：只显示非零项
+  const areaParts = [];
+  if (areaStats.un50 > 0 || areaStats.use50 > 0 || areaStats.free50x > 0) {
+    areaParts.push(`50平：不可用${areaStats.un50}间；已用${areaStats.use50}间；可用${areaStats.free50x}间（共100间）`);
+  }
+  if (areaStats.un35 > 0 || areaStats.use35 > 0 || areaStats.free35x > 0) {
+    areaParts.push(`35平：不可用${areaStats.un35}间；已用${areaStats.use35}间；可用${areaStats.free35x}间（共138间）`);
+  }
+
+  const areaText = areaParts.length > 0 ? `按面积统计：\n  - ${areaParts.join('；\n  - ')}。` : '';
+
   return [
-    `截至${tsDate}，共${totalRooms}间，已使用${usedRooms}间，剩余${freeRooms}间，不可用${unavailableRooms}间。其中2022级工程硕博士${roomCategoryCounts['2022级工程硕博士'] || 0}间，2023级工程硕博士${roomCategoryCounts['2023级工程硕博士'] || 0}间，2024级工程硕博士${roomCategoryCounts['2024级工程硕博士'] || 0}间，中信科${roomCategoryCounts['中信科'] || 0}间，实习实践${roomCategoryCounts['实习实践'] || 0}间，未标记${roomCategoryCounts['未标记'] || 0}间。`,
-    (() => {
-      const ptTotal = stats.value.perTagTotal || {};
-      const ptIn = stats.value.perTagCheckedIn || {};
-      const t22 = Number(ptTotal['2022级工程硕博士'] || 0);
-      const t23 = Number(ptTotal['2023级工程硕博士'] || 0);
-      const t24 = Number(ptTotal['2024级工程硕博士'] || 0);
-      const tzx = Number(ptTotal['中信科'] || 0);
-      const i22 = Number(ptIn['2022级工程硕博士'] || 0);
-      const i23 = Number(ptIn['2023级工程硕博士'] || 0);
-      const i24 = Number(ptIn['2024级工程硕博士'] || 0);
-      const izx = Number(ptIn['中信科'] || 0);
-      // 工程合计需包含“中信科”
-      const totalEng = t22 + t23 + t24 + tzx;
-      const inEng = i22 + i23 + i24 + izx;
-      return `累计保障工程硕博士${totalEng}人，其中22级${t22}人，23级${t23}人，24级${t24}人，中信科${tzx}人；当前在住${inEng}人，其中22级${i22}人，23级${i23}人，24级${i24}人，中信科${izx}人。`;
-    })(),
-    (() => {
-      const ptTotal = stats.value.perTagTotal || {};
-      const ptIn = stats.value.perTagCheckedIn || {};
-      const internshipTotal = Number(ptTotal['实习实践'] || 0);
-      const internshipIn = Number(ptIn['实习实践'] || 0);
-      return `累计保障实习实践${internshipTotal}人，当前在住${internshipIn}人。`;
-    })(),
-    `按面积统计：`,
-  `  - 50平：不可用${areaStats.un50}间；已用${areaStats.use50}间；可用${areaStats.free50x}间（共100间）。`,
-  `  - 35平：不可用${areaStats.un35}间；已用${areaStats.use35}间；可用${areaStats.free35x}间（共138间）。`,
-  ].join('\n');
+    `截至${tsDate}，共${totalRooms}间，已使用${usedRooms}间，剩余${freeRooms}间，不可用${unavailableRooms}间。${roomCategoryText}`,
+    engText,
+    internshipText,
+    areaText
+  ].filter(Boolean).join('\n');
 });
 const copyReport = async () => {
   const text = reportText.value || '';
@@ -712,7 +771,7 @@ const getRoomClass = (roomInfo, roomNumber) => {
 <template>
   <div class="p-4 md:p-8 bg-gray-50 min-h-screen pb-16">
     <div class="flex flex-wrap justify-between items-center mb-6 max-w-screen-2xl mx-auto">
-      <h1 class="text-3xl font-bold text-gray-800 mb-4 md:mb-0">租客楼栋看板</h1>
+      <h1 class="text-3xl font-bold text-gray-800 mb-4 md:mb-0">工程硕博士在住情况</h1>
       <div class="flex items-center gap-4 order-3 md:order-2 w-full md:w-auto mt-3 md:mt-0">
         <label class="text-sm text-gray-600">是否入住</label>
         <div class="flex items-center gap-3">

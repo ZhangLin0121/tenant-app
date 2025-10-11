@@ -330,7 +330,8 @@ async function reconcileStudentsWithTenants() {
     if (!stu.platformGuestsId && t.guestsId) updates.platformGuestsId = String(t.guestsId);
     // 线上权威：如与学生主档不一致，用线上覆盖（仅针对手机号/身份证）
     if (t.mobile && t.mobile !== stu.mobile) { updates.mobile = t.mobile; updatedPhone++; }
-    if (t.idCard && t.idCard !== stu.idCard) { updates.idCard = String(t.idCard); updatedId++; }
+    // 身份证：如果快照中有身份证数据，且与学生现有身份证不同或学生没有身份证，则更新
+    if (t.idCard && (t.idCard !== stu.idCard || !stu.idCard)) { updates.idCard = String(t.idCard); updatedId++; }
 
     await Student.updateOne({ _id: stu._id }, { $set: updates });
     matchedStudentIds.push(stu._id);
