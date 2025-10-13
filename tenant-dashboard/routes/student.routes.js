@@ -6,10 +6,18 @@ const Tenant = require('../models/tenant.model');
 // 列表：支持按 tag 过滤、关键词搜索、分页
 router.get('/', async (req, res) => {
   try {
-    const { tag = '', q = '', page = 1, pageSize = 20, isCheckedIn, excludeEmptyTag } = req.query;
+    const { q = '', page = 1, pageSize = 20, isCheckedIn, excludeEmptyTag } = req.query;
+    const rawTag = req.query.tag;
+    const hasTagParam = Object.prototype.hasOwnProperty.call(req.query, 'tag');
+
     const filter = {};
-    if (tag) filter.tag = tag;
-    else if (typeof excludeEmptyTag === 'string' && ['1', 'true', 'yes'].includes(String(excludeEmptyTag).toLowerCase())) {
+    if (hasTagParam && rawTag !== 'all') {
+      if (typeof rawTag === 'string' && rawTag.trim() !== '') {
+        filter.tag = rawTag;
+      } else {
+        filter.tag = '';
+      }
+    } else if (typeof excludeEmptyTag === 'string' && ['1', 'true', 'yes'].includes(String(excludeEmptyTag).toLowerCase())) {
       // 仅统计“有标签”的：排除 tag 为空字符串、null，且必须存在该字段
       filter.tag = { $exists: true, $nin: ['', null] };
     }

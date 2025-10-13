@@ -1,0 +1,28 @@
+服务启动，检测到平台账户，执行一次初始数据同步...
+开始执行同步任务...
+检测到 macOS 环境，使用系统 Chrome。
+后台服务已配置完毕，已移除定时同步任务。
+服务运行在端口 5001。
+MongoDB 连接成功...
+登录成功但未检测到 HWWAF cookies，继续使用 _ams_token/_common_token 组合。
+[同步] 登录鉴权成功，捕获到 cookies: [ '_common_token', '_ams_token' ]
+[之寓拉取] 统计: {
+  guestsCount: 171,
+  withMobile: 171,
+  withIdCard: 171,
+  sampleKeys: [
+    'id',               'contractId',
+    'houseId',          'guestsId',
+    'houseName',        'isMain',
+    'tenantName',       'mobile',
+    'fromType',         'certificateNum',
+    'emergencyContact', 'emergencyMobile',
+    'signStatus',       'occupancyFlag',
+    'enterpriseId',     'idCard'
+  ]
+}
+[之寓拉取] guestsSnapshot.json / fetchStats.json 已生成到 logs/
+同步完成，更新了 171 条租客数据。
+对账完成：新建 0（已禁用自动新建），覆盖手机号 0，覆盖身份证 0。
+已完成学生与快照的对账更新。
+本次同步任务执行完毕。

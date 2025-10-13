@@ -104,6 +104,7 @@ const syncTenantsToDB = async (tenants) => {
         console.log('没有获取到租客数据，跳过同步。');
         return;
     }
+    const now = new Date();
     const bulkOps = tenants.map(tenant => {
         const houseName = tenant.houseName || '';
         const roomMatch = houseName.match(/-(\d+)$/);
@@ -118,11 +119,15 @@ const syncTenantsToDB = async (tenants) => {
             roomNumber: parseInt(roomNumberStr, 10),
             isMain: tenant.isMain === 1,
             ...(idCardVal ? { idCard: String(idCardVal) } : {}),
+            updatedAt: now,
         };
         return {
             updateOne: {
                 filter: { _id: tenant.id },
-                update: { $set: fullData },
+                update: {
+                  $set: fullData,
+                  $setOnInsert: { createdAt: now },
+                },
                 upsert: true,
             },
         };
@@ -187,13 +192,12 @@ const runSync = async () => {
     // 之寓平台为单页应用（SPA），登录后通常不会触发完整的页面导航；
     // 直接点击登录按钮，然后通过下方的 Cookie/鉴权轮询判断登录是否成功。
     await page.click('button.el-button--primary');
-
     // --- 关键改动：使用轮询机制，主动等待关键 Cookie 出现 ---
     const startTime = Date.now();
-    const timeout = 15000; // 15秒超时
+    const timeout = Number(process.env.SYNC_LOGIN_TIMEOUT_MS || 45000);
     let foundCookies = false;
 
-    while (Date.now() - startTime < timeout) {
+   while (Date.now() - startTime < timeout) {
         // 使用 Promise.resolve().then 替代 waitForTimeout
         await new Promise(resolve => setTimeout(resolve, 1000));
         
@@ -201,7 +205,6 @@ const runSync = async () => {
         const accesskey = await page.evaluate(() => {
             return document.querySelector('meta[name="accesskey"]')?.content || '';
         });
-
         // 2. 获取所有需要的 cookies
         const pageCookies = await page.cookies('https://platform.inzhiyu.com');
         const amsToken = pageCookies.find(c => c.name === '_ams_token');
@@ -209,7 +212,8 @@ const runSync = async () => {
         const hwwafSesId = pageCookies.find(c => c.name === 'HWWAFSESID');
         const hwwafSesTime = pageCookies.find(c => c.name === 'HWWAFSESTIME');
 
-        if (amsToken && commonToken && hwwafSesId && hwwafSesTime) {
+        const hasCoreTokens = Boolean(amsToken && commonToken);
+        if (hasCoreTokens) {
             // 3. 构建完整的认证信息
             authCookie = pageCookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
             
@@ -227,11 +231,21 @@ const runSync = async () => {
                 }, authCookie, amsToken.value);
                 
                 if (checkResponse.code === 1000) {
+                    if (!hwwafSesId || !hwwafSesTime) {
+                        console.warn('登录成功但未检测到 HWWAF cookies，继续使用 _ams_token/_common_token 组合。');
+                    }
+                    console.log('[同步] 登录鉴权成功，捕获到 cookies:', pageCookies.map(c => c.name));
+                    foundCookies = true;
+                    break;
+                } else {
+                    console.warn('auth/check 返回异常，忽略并继续使用 token:', checkResponse);
                     foundCookies = true;
                     break;
                 }
             } catch (err) {
-                // 登录状态验证失败，将继续重试
+                console.warn('auth/check 调用异常，忽略并继续尝试:', err?.message || err);
+                foundCookies = true;
+                break;
             }
         }
         // 如果没找到，等待 500 毫秒再试
@@ -239,7 +253,8 @@ const runSync = async () => {
     }
 
     if (!foundCookies) {
-        throw new Error(`在 ${timeout / 1000} 秒内未能捕获到完整的鉴权 Cookie。`);
+        const cookieNames = (await page.cookies('https://platform.inzhiyu.com')).map(c => c.name);
+        throw new Error(`在 ${timeout / 1000} 秒内未能捕获到完整的鉴权 Cookie，当前拥有: ${cookieNames.join(', ')}`);
     }
     // ---------------------------------------------------------------
     
@@ -385,7 +400,7 @@ async function runFetchOnly() {
       ].filter(Boolean);
       for (const p of candidates) { try { if (p && fsx.existsSync(p)) { launchOptions.executablePath = p; break; } } catch {} }
     }
-    browser = await puppeteer.launch(launchOptions);
+   browser = await puppeteer.launch(launchOptions);
     page = await browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
     await page.goto('https://platform.inzhiyu.com/#/login', { waitUntil: 'networkidle2' });

@@ -14,6 +14,9 @@ FRONTEND_DIR="tenant-frontend"
 BACKEND_PORT=5001
 FRONTEND_PORT=5173
 
+# 记录仓库根目录，避免后续嵌套 cd 导致路径错误
+ROOT_DIR="$(pwd)"
+
 # 日志文件
 BACKEND_LOG_FILE="backend.log"
 FRONTEND_LOG_FILE="frontend.log"
@@ -39,13 +42,13 @@ start_services() {
 
     # 2. 启动后端
     echo -e "${GREEN}🚀 正在启动后端服务 (端口: ${BACKEND_PORT})...${NC}"
-    cd "$BACKEND_DIR"
+    cd "$ROOT_DIR/$BACKEND_DIR"
     nohup node index.js > $BACKEND_LOG_FILE 2>&1 &
     echo -e "后端服务已在后台启动, 日志: ${BLUE}${BACKEND_DIR}/${BACKEND_LOG_FILE}${NC}\n"
 
     # 3. 启动前端
     echo -e "${GREEN}🚀 正在启动前端服务 (端口: ${FRONTEND_PORT})...${NC}"
-    cd "$FRONTEND_DIR"
+    cd "$ROOT_DIR/$FRONTEND_DIR"
     nohup pnpm run dev > $FRONTEND_LOG_FILE 2>&1 &
     echo -e "前端服务已在后台启动, 日志: ${BLUE}${FRONTEND_DIR}/${FRONTEND_LOG_FILE}${NC}\n"
 
