@@ -7,7 +7,7 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
-      max_memory_restart: '1G',
+      max_memory_restart: '350M',
       env: {
         NODE_ENV: 'production',
         PORT: 5001
@@ -20,7 +20,7 @@ module.exports = {
       instances: 1,
       autorestart: true,
       watch: false,
-      max_memory_restart: '1G',
+      max_memory_restart: '200M',
       env: {
         PM2_SERVE_PATH: './dist',
         PM2_SERVE_PORT: 5000,
