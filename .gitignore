@@ -114,3 +114,7 @@ logs/
 
 # Runtime config
 runtime.config.js
+
+# 运行时日志与快照（不入库）
+/logs/
+tenant-dashboard/logs/
