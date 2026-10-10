@@ -11,7 +11,7 @@ const activeTag = ref('all');
 const q = ref('');
 const loading = ref(false);
 const checkedInOnly = ref(false); // 仅显示已入住学生
-const onlyTagged = ref(false); // 默认展示所有学生，用户可手动开启仅显示有标签
+const onlyTagged = ref(true); // “仅有标签”统计（默认开启，满足“已入住且有标签”的口径）
 
 const showModal = ref(false);
 const editing = ref(null);
@@ -51,12 +51,9 @@ const fetchTags = async () => {
   try {
     const res = await api.get('/api/students/tags');
     if (res.data?.success) {
-      // 保留空字符串，用于显示“未分组”，同时并入常用标签，避免下拉列表为空
+      // 保留空字符串，用于显示“未分组”（否则手动分项求和会漏掉未标记的人）
       const arr = Array.isArray(res.data.data) ? res.data.data : [];
-      const merged = new Set([...arr, ...allowedTags]);
-      // 确保空字符串在集合中，用于展示“未分组”
-      if (arr.includes('')) merged.add('');
-      tags.value = Array.from(merged.values());
+      tags.value = arr; // 不再过滤 Boolean
     }
   } catch {}
 };

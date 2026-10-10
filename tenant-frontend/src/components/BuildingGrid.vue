@@ -11,7 +11,13 @@ const selectedRoom = ref(null);
 const selectedRoomNumber = ref(null);
 const isRefreshing = ref(false);
 const syncStatus = ref({ isSyncing: false, lastSyncAt: null, cooldownRemainingMs: 0 });
-let syncTimer = null;
+const syncMessage = ref('');
+const syncError = ref('');
+const isSyncLocked = ref(false);
+const fetchPending = ref(0);
+const overlayActive = computed(() => isSyncLocked.value || fetchPending.value > 0);
+let syncPollTimer = null;
+const syncPollIntervalMs = 2000;
 // 视图筛选：是否入住
 const occupancyFilters = ref({
   all: true,
@@ -51,26 +57,27 @@ const reportText = computed(() => {
   const last = syncStatus.value.lastSyncAt ? new Date(syncStatus.value.lastSyncAt) : new Date();
   const tsDate = `${last.getFullYear()}年${String(last.getMonth()+1).padStart(2,'0')}月${String(last.getDate()).padStart(2,'0')}日`;
   const occ = statistics.value.occupiedRooms;
-  const totalRooms = 238;
-  // 面积统计：50平总 100（2~20 层每层5间=95，加 1层5间=100），35平总 138（共238）
+  const managedTotalRooms = totalRooms.value;
+  // 面积统计口径：仅统计 1~totalFloors 楼（当前负责范围）
   let used50 = 0; let used35 = 0;
-  for (const f in buildingData.value) {
-    for (const r in buildingData.value[f]) {
+  for (let floor = 1; floor <= totalFloors; floor++) {
+    const floorRooms = buildingData.value[floor] || {};
+    for (const r in floorRooms) {
       if (roomIs50(r)) used50++; else used35++;
     }
   }
-  const total50 = 100, total35 = 138;
+  const total50 = totalRooms50.value, total35 = totalRooms35.value;
   const free50 = Math.max(0, (total50 - used50) - flaggedVacantCounts.value.n50);
   const free35 = Math.max(0, (total35 - used35) - flaggedVacantCounts.value.n35);
   const pt = stats.value.perTagTotal || {}; const pci = stats.value.perTagCheckedIn || {};
-  const order = ['不可用','2022级工程硕博士','2023级工程硕博士','2024级工程硕博士','中信科','实习实践','未标记','未入住'];
+  const order = ['不可用','2022级工程硕博士','2023级工程硕博士','2024级工程硕博士','2025级工程硕博士','2026级工程硕博士','中信科','实习实践','未标记','未入住'];
   const fmtLine = (map) => order
     .map(k => `${k}：${map[k] || 0}间`)
     .join('；');
 
-  // 房间分类（238 间）：不可用优先；已入住按主租客/房间标签；无标签记“未标记”；无住户记“未入住”
+  // 房间分类（负责范围内房间）：不可用优先；已入住按主租客/房间标签；无标签记“未标记”；无住户记“未入住”
   const roomCategoryCounts = (() => {
-    const counts = { '不可用': 0, '2022级工程硕博士': 0, '2023级工程硕博士': 0, '2024级工程硕博士': 0, '中信科': 0, '实习实践': 0, '未标记': 0, '未入住': 0 };
+    const counts = { '不可用': 0, '2022级工程硕博士': 0, '2023级工程硕博士': 0, '2024级工程硕博士': 0, '2025级工程硕博士': 0, '2026级工程硕博士': 0, '中信科': 0, '实习实践': 0, '未标记': 0, '未入住': 0 };
     for (let floor = 1; floor <= totalFloors; floor++) {
       for (let idx = 1; idx <= roomsPerFloorLayout; idx++) {
         const rn = getRoomNumberFromLayoutIndex(floor, idx);
@@ -117,6 +124,8 @@ const reportText = computed(() => {
   if (roomCategoryCounts['2022级工程硕博士'] > 0) roomCategoryParts.push(`2022级工程硕博士${roomCategoryCounts['2022级工程硕博士']}间`);
   if (roomCategoryCounts['2023级工程硕博士'] > 0) roomCategoryParts.push(`2023级工程硕博士${roomCategoryCounts['2023级工程硕博士']}间`);
   if (roomCategoryCounts['2024级工程硕博士'] > 0) roomCategoryParts.push(`2024级工程硕博士${roomCategoryCounts['2024级工程硕博士']}间`);
+  if (roomCategoryCounts['2025级工程硕博士'] > 0) roomCategoryParts.push(`2025级工程硕博士${roomCategoryCounts['2025级工程硕博士']}间`);
+  if (roomCategoryCounts['2026级工程硕博士'] > 0) roomCategoryParts.push(`2026级工程硕博士${roomCategoryCounts['2026级工程硕博士']}间`);
   if (roomCategoryCounts['中信科'] > 0) roomCategoryParts.push(`中信科${roomCategoryCounts['中信科']}间`);
   if (roomCategoryCounts['实习实践'] > 0) roomCategoryParts.push(`实习实践${roomCategoryCounts['实习实践']}间`);
   if (roomCategoryCounts['未标记'] > 0) roomCategoryParts.push(`未标记${roomCategoryCounts['未标记']}间`);
@@ -129,25 +138,33 @@ const reportText = computed(() => {
   const t22 = Number(ptTotal['2022级工程硕博士'] || 0);
   const t23 = Number(ptTotal['2023级工程硕博士'] || 0);
   const t24 = Number(ptTotal['2024级工程硕博士'] || 0);
+  const t25 = Number(ptTotal['2025级工程硕博士'] || 0);
+  const t26 = Number(ptTotal['2026级工程硕博士'] || 0);
   const tzx = Number(ptTotal['中信科'] || 0);
   const i22 = Number(ptIn['2022级工程硕博士'] || 0);
   const i23 = Number(ptIn['2023级工程硕博士'] || 0);
   const i24 = Number(ptIn['2024级工程硕博士'] || 0);
+  const i25 = Number(ptIn['2025级工程硕博士'] || 0);
+  const i26 = Number(ptIn['2026级工程硕博士'] || 0);
   const izx = Number(ptIn['中信科'] || 0);
 
-  const totalEng = t22 + t23 + t24 + tzx;
-  const inEng = i22 + i23 + i24 + izx;
+  const totalEng = t22 + t23 + t24 + t25 + t26 + tzx;
+  const inEng = i22 + i23 + i24 + i25 + i26 + izx;
 
   const engParts = [];
   if (t22 > 0) engParts.push(`22级${t22}人`);
   if (t23 > 0) engParts.push(`23级${t23}人`);
   if (t24 > 0) engParts.push(`24级${t24}人`);
+  if (t25 > 0) engParts.push(`25级${t25}人`);
+  if (t26 > 0) engParts.push(`26级${t26}人`);
   if (tzx > 0) engParts.push(`中信科${tzx}人`);
 
   const engInParts = [];
   if (i22 > 0) engInParts.push(`22级${i22}人`);
   if (i23 > 0) engInParts.push(`23级${i23}人`);
   if (i24 > 0) engInParts.push(`24级${i24}人`);
+  if (i25 > 0) engInParts.push(`25级${i25}人`);
+  if (i26 > 0) engInParts.push(`26级${i26}人`);
   if (izx > 0) engInParts.push(`中信科${izx}人`);
 
   const engText = totalEng > 0 ? `累计保障工程硕博士${totalEng}人${engParts.length > 0 ? `，其中${engParts.join('，')}` : ''}；当前在住${inEng}人${engInParts.length > 0 ? `，其中${engInParts.join('，')}` : ''}。` : '';
@@ -160,16 +177,16 @@ const reportText = computed(() => {
   // 面积统计：只显示非零项
   const areaParts = [];
   if (areaStats.un50 > 0 || areaStats.use50 > 0 || areaStats.free50x > 0) {
-    areaParts.push(`50平：不可用${areaStats.un50}间；已用${areaStats.use50}间；可用${areaStats.free50x}间（共100间）`);
+    areaParts.push(`50平：不可用${areaStats.un50}间；已用${areaStats.use50}间；可用${areaStats.free50x}间（共${total50}间）`);
   }
   if (areaStats.un35 > 0 || areaStats.use35 > 0 || areaStats.free35x > 0) {
-    areaParts.push(`35平：不可用${areaStats.un35}间；已用${areaStats.use35}间；可用${areaStats.free35x}间（共138间）`);
+    areaParts.push(`35平：不可用${areaStats.un35}间；已用${areaStats.use35}间；可用${areaStats.free35x}间（共${total35}间）`);
   }
 
   const areaText = areaParts.length > 0 ? `按面积统计：\n  - ${areaParts.join('；\n  - ')}。` : '';
 
   return [
-    `截至${tsDate}，共${totalRooms}间，已使用${usedRooms}间，剩余${freeRooms}间，不可用${unavailableRooms}间。${roomCategoryText}`,
+    `截至${tsDate}，共${managedTotalRooms}间，已使用${usedRooms}间，剩余${freeRooms}间，不可用${unavailableRooms}间。${roomCategoryText}`,
     engText,
     internshipText,
     areaText
@@ -203,6 +220,7 @@ const copyReport = async () => {
 const roomFlags = ref({}); // { [roomNumber]: { type, note } }
 const roomFlagsReady = ref(false);
 const fetchRoomFlags = async () => {
+  beginDataFetch('');
   try {
     const res = await api.get('/api/rooms/flags');
     if (res.data?.success && Array.isArray(res.data.data)) {
@@ -211,7 +229,7 @@ const fetchRoomFlags = async () => {
       roomFlags.value = map;
     }
   } catch {}
-  finally { roomFlagsReady.value = true; }
+  finally { roomFlagsReady.value = true; endDataFetch({ success: true, message: '' }); }
 };
 
 // --- 右键菜单状态 ---
@@ -221,9 +239,31 @@ const contextMenuRoomInfo = ref(null);
 const contextMenuRoomNumber = ref(null);
 
 // --- 常量定义 ---
-const totalFloors = 20;
+// 当前仅负责 1~15 楼（16~20 楼不纳入图示与统计口径）
+const totalFloors = 15;
 const roomsPerFloorLayout = 12;
-const totalRooms = 238; 
+// 负责范围内的房间总数（根据布局映射动态计算，避免硬编码）
+const totalRooms = computed(() => {
+  let cnt = 0;
+  for (let floor = 1; floor <= totalFloors; floor++) {
+    for (let idx = 1; idx <= roomsPerFloorLayout; idx++) {
+      const rn = getRoomNumberFromLayoutIndex(floor, idx);
+      if (rn !== null) cnt++;
+    }
+  }
+  return cnt;
+});
+const totalRooms50 = computed(() => {
+  let cnt = 0;
+  for (let floor = 1; floor <= totalFloors; floor++) {
+    for (let idx = 1; idx <= roomsPerFloorLayout; idx++) {
+      const rn = getRoomNumberFromLayoutIndex(floor, idx);
+      if (rn !== null && roomIs50(rn)) cnt++;
+    }
+  }
+  return cnt;
+});
+const totalRooms35 = computed(() => totalRooms.value - totalRooms50.value);
 
 // --- 颜色与标签选项（颜色在下方动态计算） ---
 
@@ -232,14 +272,55 @@ const fetchSyncStatus = async () => {
     const res = await api.get('/api/sync/status');
     if (res.data?.success) {
       syncStatus.value = res.data.data;
+      return res.data.data;
     }
   } catch (e) {
     // 静默失败
   }
+  return null;
+};
+// 短时高频轮询同步状态，完成后自动拉最新数据
+const stopShortSyncPolling = (unlock = false) => {
+  if (syncPollTimer) {
+    clearTimeout(syncPollTimer);
+    syncPollTimer = null;
+  }
+  if (unlock) isSyncLocked.value = false;
+};
+const startShortSyncPolling = ({ timeoutMs = 5 * 60 * 1000 } = {}) => {
+  stopShortSyncPolling();
+  isSyncLocked.value = true;
+  syncError.value = '';
+  const startedAt = Date.now();
+  const poll = async () => {
+    const status = await fetchSyncStatus();
+    const syncing = status?.isSyncing ?? true;
+    const cooling = Number(status?.cooldownRemainingMs || 0) > 0;
+
+    if (!syncing && !cooling) {
+      try { await Promise.all([fetchData(), fetchStats(), fetchRoomFlags()]); } catch {}
+      const ts = status?.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString() : '';
+      syncMessage.value = ts ? `已更新至 ${ts}` : '已更新为最新数据';
+      stopShortSyncPolling(true);
+      return;
+    }
+
+    if (Date.now() - startedAt > timeoutMs) {
+      syncError.value = '同步超时，请点击重试';
+      syncMessage.value = '同步超时，请点击重试';
+      stopShortSyncPolling(false);
+      return;
+    }
+
+    syncMessage.value = '正在获取最新数据…';
+    syncPollTimer = setTimeout(poll, syncPollIntervalMs);
+  };
+  syncMessage.value = '正在获取最新数据…';
+  poll();
 };
 const vacantColor = 'bg-gray-200 hover:bg-gray-300';
 // 右键菜单标签选项：默认 + 动态（来自统计）
-const defaultTagOptions = ['2022级工程硕博士','2023级工程硕博士','2024级工程硕博士','实习实践'];
+const defaultTagOptions = ['2022级工程硕博士','2023级工程硕博士','2024级工程硕博士','2025级工程硕博士','2026级工程硕博士','实习实践'];
 const tagOptions = computed(() => {
   const set = new Set(defaultTagOptions);
   const perTag = (stats.value && stats.value.perTagTotal) ? stats.value.perTagTotal : {};
@@ -248,12 +329,25 @@ const tagOptions = computed(() => {
 });
 
 // --- 生命周期与数据获取 ---
+const triggerSyncOnLoad = async () => {
+  isSyncLocked.value = true;
+  syncError.value = '';
+  syncMessage.value = '正在获取最新数据…';
+  try {
+    await api.post('/api/sync');
+  } catch {
+    // 如果同步正在进行或触发失败，也继续轮询状态
+  }
+  startShortSyncPolling();
+};
+
+const retrySync = async () => {
+  await triggerSyncOnLoad();
+};
+
 onMounted(() => {
-  fetchData();
-  fetchSyncStatus();
-  fetchStats();
-  fetchRoomFlags();
-  syncTimer = setInterval(fetchSyncStatus, 5000);
+  // 登录后必须拿到最新数据：不先展示旧数据，直接触发同步并等待完成
+  triggerSyncOnLoad();
 
   // 监听同页事件
   const onStudentsUpdated = () => { fetchData(); fetchStats(); fetchRoomFlags(); };
@@ -275,19 +369,6 @@ onMounted(() => {
     try { bc && bc.close && bc.close(); } catch {}
   });
 
-  // 页面打开：在不处于冷却或同步中的情况下，静默触发一次同步
-  (async () => {
-    try {
-      // 确保拿到最新状态
-      try { await fetchSyncStatus(); } catch {}
-      const cooling = Number(syncStatus.value.cooldownRemainingMs || 0) > 0;
-      if (!syncStatus.value.isSyncing && !cooling) {
-        await api.post('/api/sync').catch(() => {});
-        // 触发后拉一次状态
-        try { await fetchSyncStatus(); } catch {}
-      }
-    } catch {}
-  })();
 });
 
 const formattedLastSync = computed(() => {
@@ -296,34 +377,64 @@ const formattedLastSync = computed(() => {
     : '—';
 });
 
+const beginDataFetch = (message = '正在加载数据…') => {
+  fetchPending.value += 1;
+  if (message) syncMessage.value = message;
+};
+const endDataFetch = ({ success, message } = {}) => {
+  fetchPending.value = Math.max(0, fetchPending.value - 1);
+  if (typeof message === 'string' && message) {
+    syncMessage.value = message;
+    return;
+  }
+  if (!isSyncLocked.value && fetchPending.value === 0) {
+    if (success) {
+      const ts = syncStatus.value.lastSyncAt ? new Date(syncStatus.value.lastSyncAt).toLocaleString() : '';
+      syncMessage.value = ts ? `数据已刷新（${ts}）` : '数据已刷新';
+    } else {
+      syncMessage.value = '数据获取失败，请稍后再试';
+    }
+  }
+};
+
 onUnmounted(() => {
-  if (syncTimer) clearInterval(syncTimer);
+  stopShortSyncPolling(true);
 });
 
 const fetchData = async () => {
   isLoading.value = true;
+  beginDataFetch('正在加载数据…');
+  let success = false;
+  let msg = '';
   try {
     const response = await api.get('/api/tenants');
     if (response.data.success) {
       buildingData.value = response.data.data;
+      success = true;
     } else {
       throw new Error('获取数据失败');
     }
   } catch (err) {
     // 生产提示：去掉 Vite 代理字样
     const code = err?.response?.status;
-    const msg = code ? `（HTTP ${code}）` : '';
-    errorMsg.value = `无法加载租客数据，请稍后重试或联系管理员${msg}`;
+    const extra = code ? `（HTTP ${code}）` : '';
+    msg = `无法加载租客数据，请稍后重试或联系管理员${extra}`;
+    errorMsg.value = msg;
   } finally {
+    endDataFetch({ success, message: msg });
     isLoading.value = false;
   }
 };
 
 const fetchStats = async () => {
+  beginDataFetch('');
   try {
     const res = await api.get('/api/stats');
     if (res.data?.success) stats.value = res.data.data || stats.value;
-  } catch {}
+  } catch {
+  } finally {
+    endDataFetch({ success: true, message: '' });
+  }
 };
 
 // --- 数据统计逻辑 ---
@@ -331,6 +442,8 @@ const normalizeTag = (t) => {
   if (t === '22级工程硕博士') return '2022级工程硕博士';
   if (t === '23级工程硕博士') return '2023级工程硕博士';
   if (t === '24级工程硕博士') return '2024级工程硕博士';
+  if (t === '25级工程硕博士') return '2025级工程硕博士';
+  if (t === '26级工程硕博士') return '2026级工程硕博士';
   return t || '';
 };
 
@@ -344,14 +457,17 @@ const statistics = computed(() => {
     '2022级工程硕博士': 0,
     '2023级工程硕博士': 0,
     '2024级工程硕博士': 0,
+    '2025级工程硕博士': 0,
+    '2026级工程硕博士': 0,
     '实习实践': 0,
     '未入住': 0,
   };
 
-  for (const floor in buildingData.value) {
-    for (const roomNum in buildingData.value[floor]) {
+  for (let floor = 1; floor <= totalFloors; floor++) {
+    const floorRooms = buildingData.value[floor] || {};
+    for (const roomNum in floorRooms) {
       occupiedRooms++;
-      const tenantsInRoom = buildingData.value[floor][roomNum];
+      const tenantsInRoom = floorRooms[roomNum];
       totalTenants += tenantsInRoom.length;
       if (tenantsInRoom && tenantsInRoom.length > 0) {
         const representativeTenant = tenantsInRoom.find(t => t.isMain) || tenantsInRoom[0];
@@ -379,10 +495,15 @@ const roomIs50 = (rn) => {
 const flaggedVacantCounts = computed(() => {
   let total = 0, n50 = 0, n35 = 0;
   const occupiedSet = new Set();
-  for (const f in buildingData.value) {
-    for (const r in buildingData.value[f]) occupiedSet.add(String(r));
+  for (let floor = 1; floor <= totalFloors; floor++) {
+    const floorRooms = buildingData.value[floor] || {};
+    for (const r in floorRooms) occupiedSet.add(String(r));
   }
   for (const key in roomFlags.value) {
+    const roomNum = Number(key);
+    if (!Number.isFinite(roomNum)) continue;
+    const floor = Math.floor(roomNum / 100);
+    if (floor < 1 || floor > totalFloors) continue; // 不统计非负责楼层
     if (!occupiedSet.has(String(key))) {
       total++;
       if (roomIs50(Number(key))) n50++; else n35++;
@@ -405,7 +526,7 @@ const roomSummary = computed(() => {
       else vacant++;
     }
   }
-  return { total: totalRooms, occupied, unavailable, vacant };
+  return { total: totalRooms.value, occupied, unavailable, vacant };
 });
 
 const roomRates = computed(() => {
@@ -421,13 +542,15 @@ const roomRates = computed(() => {
 // 已入住 -> 标签分布气泡（支持动态标签）
 const isTagPopoverOpen = ref(false);
 const hoveredTag = ref(null);
-const defaultTagOrder = ['2022级工程硕博士','2023级工程硕博士','2024级工程硕博士','实习实践'];
+const defaultTagOrder = ['2022级工程硕博士','2023级工程硕博士','2024级工程硕博士','2025级工程硕博士','2026级工程硕博士','实习实践'];
 
 // 颜色：已知标签固定颜色，未知标签按名称哈希分配稳定颜色
 const tagColors = {
   '2022级工程硕博士': 'bg-blue-600 hover:bg-blue-500',
   '2023级工程硕博士': 'bg-green-600 hover:bg-green-500',
   '2024级工程硕博士': 'bg-amber-500 hover:bg-amber-400',
+  '2025级工程硕博士': 'bg-cyan-600 hover:bg-cyan-500',
+  '2026级工程硕博士': 'bg-rose-600 hover:bg-rose-500',
   '实习实践': 'bg-violet-600 hover:bg-violet-500',
   '': 'bg-slate-500 hover:bg-slate-400',
 };
@@ -461,7 +584,7 @@ const colorClassForTag = (t) => {
 const solidBarColorForTag = (t) => {
   const k = String(t || '');
   if (!k) return 'bg-slate-300';
-  if (['2022级工程硕博士','2023级工程硕博士','2024级工程硕博士','实习实践'].includes(k)) {
+  if (['2022级工程硕博士','2023级工程硕博士','2024级工程硕博士','2025级工程硕博士','2026级工程硕博士','实习实践'].includes(k)) {
     return tagColors[k].replace(' hover:bg-', ' ').split(' ')[0];
   }
   const idx = hashCode(k) % paletteSolid.length;
@@ -472,6 +595,8 @@ const shortTag = (t) => {
   if (t === '2022级工程硕博士') return '22';
   if (t === '2023级工程硕博士') return '23';
   if (t === '2024级工程硕博士') return '24';
+  if (t === '2025级工程硕博士') return '25';
+  if (t === '2026级工程硕博士') return '26';
   if (t === '实习实践') return '实';
   return String(t).slice(0, 2);
 };
@@ -570,6 +695,10 @@ const scrollToRoom = (rn) => {
 
 // --- 事件处理与辅助函数 ---
 const handleRefresh = async () => {
+  if (overlayActive.value) {
+    alert('正在获取最新数据，请稍后');
+    return;
+  }
   if (syncStatus.value.isSyncing) {
     alert('同步任务正在进行中，请稍后再试。');
     return;
@@ -577,9 +706,8 @@ const handleRefresh = async () => {
   isRefreshing.value = true;
   try {
     await api.post('/api/sync');
-    // 立即拉一次状态，给用户更及时反馈
-    try { await fetchSyncStatus(); } catch {}
-    alert('已成功触发后台同步任务！数据将在大约1-2分钟后更新。请稍后手动刷新页面查看最新数据。');
+    syncMessage.value = '正在获取最新数据…';
+    startShortSyncPolling();
   } catch (err) {
     const message = err.response?.data?.message || '触发同步失败，请稍后再试。';
     alert(message);
@@ -791,7 +919,7 @@ const getRoomClass = (roomInfo, roomNumber) => {
       </div>
       <button 
         @click="handleRefresh" 
-        :disabled="isRefreshing || syncStatus.isSyncing"
+        :disabled="isRefreshing || syncStatus.isSyncing || overlayActive"
         class="bg-blue-600 text-white font-bold py-2 px-4 rounded-md hover:bg-blue-700 transition-all duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center"
       >
         <svg v-if="isRefreshing" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -800,7 +928,7 @@ const getRoomClass = (roomInfo, roomNumber) => {
         </svg>
         {{ (isRefreshing || syncStatus.isSyncing) ? '同步中...' : '主动刷新数据' }}
       </button>
-      <div class="text-sm text-gray-500 ml-4">上次同步：{{ formattedLastSync }}</div>
+      <div class="text-sm text-gray-500 ml-4"><span v-if="syncMessage">{{ syncMessage }}</span><span v-else>上次同步：{{ formattedLastSync }}</span></div>
     </div>
 
     <div v-if="!isLoading" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-12 gap-4 mb-8 max-w-screen-2xl mx-auto">
@@ -967,6 +1095,13 @@ const getRoomClass = (roomInfo, roomNumber) => {
       </div>
     </div>
 
+    <div v-if="overlayActive" class="fixed inset-0 bg-white/70 backdrop-blur-sm z-40 flex items-center justify-center text-gray-700 text-sm font-medium pointer-events-auto">
+      <div class="flex flex-col items-center gap-3">
+        <div>{{ syncMessage || '正在获取最新数据，页面暂不可操作…' }}</div>
+        <button v-if="syncError" @click="retrySync" class="px-3 py-1 bg-blue-600 text-white rounded">重试同步</button>
+      </div>
+    </div>
+
     <div v-if="isLoading" class="text-center text-gray-500 mt-10">正在加载数据...</div>
     <div v-if="errorMsg" class="text-center text-red-500 mt-10">{{ errorMsg }}</div>
 
@@ -1024,7 +1159,7 @@ const getRoomClass = (roomInfo, roomNumber) => {
 
   <!-- Sticky Footer: Show last sync time -->
   <div class="fixed bottom-0 left-0 right-0 bg-white/95 border-t border-gray-200 py-2 text-center text-xs text-gray-600 z-40">
-    上次同步：{{ formattedLastSync }}
+    <span v-if="syncMessage">{{ syncMessage }}</span><span v-else>上次同步：{{ formattedLastSync }}</span>
   </div>
 
   <div v-if="isContextMenuOpen" 

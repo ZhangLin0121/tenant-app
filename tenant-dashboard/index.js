@@ -38,6 +38,33 @@ let isSyncing = false;
 let lastSyncAt = null; // ISO 字符串，记录最近一次同步完成时间
 let cooldownUntil = 0; // 毫秒时间戳：冷却期内拒绝触发，但不算正在同步
 
+const triggerSync = ({ source = 'manual' } = {}) => {
+  if (isSyncing) return false;
+  isSyncing = true;
+  if (source === 'manual') {
+    console.log('收到手动刷新指令，开始执行数据同步...');
+  } else {
+    console.log('服务启动触发初始同步...');
+  }
+  runSync()
+    .then((ok) => {
+      if (source === 'manual') {
+        console.log('手动刷新任务在后台执行完毕。');
+      } else {
+        console.log('初始同步任务在后台执行完毕。');
+      }
+      if (ok) lastSyncAt = new Date().toISOString();
+    })
+    .catch((e) => {
+      console.error(`[同步] ${source} 触发执行失败:`, e?.message || e);
+    })
+    .finally(() => {
+      isSyncing = false;
+      cooldownUntil = 0;
+    });
+  return true;
+};
+
 // 状态查询（若内存无时间，则回退到 DB 最新快照时间）
 app.get('/api/sync/status', async (_req, res) => {
   try {
@@ -59,31 +86,11 @@ app.post('/api/sync', async (req, res) => {
   if (!process.env.PLATFORM_USERNAME || !process.env.PLATFORM_PASSWORD) {
     return res.status(400).json({ success: false, message: '未配置平台账号密码，请先在 tenant-dashboard/.env 或 .env.production 中设置 PLATFORM_USERNAME/PLATFORM_PASSWORD 后再重试。' });
   }
-  if (isSyncing) {
+  const started = triggerSync({ source: 'manual' });
+  if (!started) {
     return res.status(429).json({ success: false, message: '同步任务正在进行中，请稍后再试。' });
   }
-  if (Date.now() < cooldownUntil) {
-    return res.status(429).json({ success: false, message: '同步触发过于频繁，请稍后再试。' });
-  }
-  
-  try {
-    isSyncing = true;
-    console.log('收到手动刷新指令，开始执行数据同步...');
-    runSync()
-      .then((ok) => {
-        console.log('手动刷新任务在后台执行完毕。');
-        if (ok) lastSyncAt = new Date().toISOString();
-      })
-      .catch(() => {})
-      .finally(() => {
-        isSyncing = false; // 运行结束即恢复可用状态
-        // 设置冷却 5 分钟，防止频繁触发
-        cooldownUntil = Date.now() + 5 * 60 * 1000;
-      });
-    res.json({ success: true, message: '已成功触发后台同步任务，数据将在稍后更新。' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: '触发同步任务失败。' });
-  }
+  res.json({ success: true, message: '已成功触发后台同步任务，数据将在稍后更新。' });
 });
 
 // 仅对账：将学生主档的标签/入住信息回写到租客快照（不触发抓取）
@@ -161,9 +168,7 @@ app.listen(PORT, () => console.log(`服务运行在端口 ${PORT}。`));
 // ---- 同步任务 ----
 if (process.env.PLATFORM_USERNAME && process.env.PLATFORM_PASSWORD) {
   console.log('服务启动，检测到平台账户，执行一次初始数据同步...');
-  runSync()
-    .then((ok) => { if (ok) lastSyncAt = new Date().toISOString(); })
-    .catch(() => {});
+  triggerSync({ source: 'startup' });
 } else {
   console.log('服务启动，跳过自动同步：未配置平台账户。');
 }
