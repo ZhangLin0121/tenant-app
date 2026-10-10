@@ -32,3 +32,16 @@ Notes
 Production (xiebin)
 - Preferred: `scripts/deploy-xiebin.sh` (packs+uploads+builds+PM2 start). See `scripts/DEPLOYMENT.md` for the exact, tested steps and troubleshooting.
 - Runtime URL: `http://<server>:5001` (backend serves API and static UI). Do not commit secrets; add platform credentials only on server `.env.production`.
+
+---
+
+## 生产访问信息
+
+| 项目 | 值 |
+|---|---|
+| **线上入口** | https://www.cacophonyem.me/tenant/ |
+| 服务器 | s131（8.162.5.131） |
+| 服务器目录 | `/opt/tenant-app` |
+| 运行方式 | PM2 `tenant-dashboard`（端口 5001） |
+
+> 本仓库是 s131 上「��的源码镜像，与服务器目录保持同步；改动请两边同步后提交。
